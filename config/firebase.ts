@@ -8,12 +8,12 @@ import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
-  apiKey: 'YOUR_API_KEY',
-  authDomain: 'YOUR_AUTH_DOMAIN',
-  projectId: 'YOUR_PROJECT_ID',
-  storageBucket: 'YOUR_STORAGE_BUCKET',
-  messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
-  appId: 'YOUR_APP_ID',
+  apiKey: "AIzaSyAuIaTj_Sqy6CBu63fqioiWsm0CfTAphUY",
+  authDomain: "chama-connect-f513f.firebaseapp.com",
+  projectId: "chama-connect-f513f",
+  storageBucket: "chama-connect-f513f.firebasestorage.app",
+  messagingSenderId: "724204755746",
+  appId: "1:724204755746:web:4de16fbc47ef3768abe37b"
 };
 
 let app;
