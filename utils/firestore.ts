@@ -15,6 +15,7 @@ import {
   increment,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { DEMO_MODE } from '@/config/appConfig';
 import { Chama, Membership, Cycle, Contribution, Fine, Payout } from '@/types';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -618,171 +619,127 @@ const MOCK_PAYOUTS: Payout[] = [
 ];
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
+// In real mode these return exactly what Firestore holds, including nothing.
+// Mock data is only used when DEMO_MODE is on AND the chama is the demo chama.
+
+const isDemo = (chamaId: string) => DEMO_MODE && chamaId.startsWith('chama_demo');
+
+function toList<T>(snap: { docs: { id: string; data: () => unknown }[] }): T[] {
+  return snap.docs.map(
+    (d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }) as unknown as T
+  );
+}
+
+function demoContributionFor(userId: string): Contribution {
+  return {
+    id: `contrib_${userId}`,
+    userId,
+    chamaId: 'chama_demo_1',
+    cycleId: 'cycle_demo_1',
+    amount: 5000,
+    date: new Date().toISOString(),
+    status: 'paid',
+    userName: 'You',
+  };
+}
 
 export async function getChamaMembers(chamaId: string): Promise<Membership[]> {
-  console.log('[Firestore] getChamaMembers:', chamaId);
+  if (isDemo(chamaId)) return MOCK_MEMBERS;
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_MEMBERS;
-    const q = query(collection(db, 'memberships'), where('chamaId', '==', chamaId));
-    const snap = await getDocs(q);
-    if (snap.empty) return MOCK_MEMBERS;
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Membership));
+    const snap = await getDocs(query(collection(db, 'memberships'), where('chamaId', '==', chamaId)));
+    return toList<Membership>(snap);
   } catch (err) {
-    console.warn('[Firestore] Error getting members, using mock:', err);
-    return MOCK_MEMBERS;
+    console.error('[Firestore] getChamaMembers failed:', err);
+    return [];
   }
 }
 
 export async function getActiveCycle(chamaId: string): Promise<Cycle | null> {
+  if (isDemo(chamaId)) return MOCK_CYCLE;
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_CYCLE;
     const chamaDoc = await getDoc(doc(db, 'chamas', chamaId));
-    if (!chamaDoc.exists()) return MOCK_CYCLE;
-    const chamaData = chamaDoc.data() as Chama;
-    if (!chamaData.currentCycleId) return MOCK_CYCLE;
-    const cycleDoc = await getDoc(doc(db, 'cycles', chamaData.currentCycleId));
-    if (!cycleDoc.exists()) return MOCK_CYCLE;
-    return { id: cycleDoc.id, ...cycleDoc.data() } as Cycle;
+    const currentCycleId = chamaDoc.exists() ? (chamaDoc.data() as Chama).currentCycleId : undefined;
+    if (!currentCycleId) return null;
+    const cycleDoc = await getDoc(doc(db, 'cycles', currentCycleId));
+    return cycleDoc.exists() ? ({ id: cycleDoc.id, ...cycleDoc.data() } as Cycle) : null;
   } catch (err) {
-    console.warn('[Firestore] Error getting active cycle, using mock:', err);
-    return MOCK_CYCLE;
+    console.error('[Firestore] getActiveCycle failed:', err);
+    return null;
   }
 }
 
 export async function getUserContributions(userId: string, chamaId: string): Promise<Contribution[]> {
-  console.log('[Firestore] getUserContributions:', userId);
+  if (isDemo(chamaId)) {
+    const existing = MOCK_CONTRIBUTIONS.filter((c) => c.userId === userId);
+    return existing.length > 0 ? existing : [demoContributionFor(userId)];
+  }
   try {
-    if (chamaId.startsWith('chama_demo')) {
-      const existing = MOCK_CONTRIBUTIONS.filter((c) => c.userId === userId);
-      if (existing.length > 0) return existing;
-      return [
-        {
-          id: `contrib_${userId}`,
-          userId: userId,
-          chamaId: 'chama_demo_1',
-          cycleId: 'cycle_demo_1',
-          amount: 5000,
-          date: new Date().toISOString(),
-          status: 'paid',
-          userName: 'You',
-        },
-      ];
-    }
     const q = query(
       collection(db, 'contributions'),
       where('userId', '==', userId),
       where('chamaId', '==', chamaId),
       orderBy('date', 'desc')
     );
-    const snap = await getDocs(q);
-    if (snap.empty) {
-      return [
-        {
-          id: `contrib_${userId}`,
-          userId: userId,
-          chamaId: 'chama_demo_1',
-          cycleId: 'cycle_demo_1',
-          amount: 5000,
-          date: new Date().toISOString(),
-          status: 'paid',
-          userName: 'You',
-        },
-      ];
-    }
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Contribution));
+    return toList<Contribution>(await getDocs(q));
   } catch (err) {
-    console.warn('[Firestore] Error getting user contribs, using mock:', err);
-    return [
-      {
-        id: `contrib_${userId}`,
-        userId: userId,
-        chamaId: 'chama_demo_1',
-        cycleId: 'cycle_demo_1',
-        amount: 5000,
-        date: new Date().toISOString(),
-        status: 'paid',
-        userName: 'You',
-      },
-    ];
+    console.error('[Firestore] getUserContributions failed:', err);
+    return [];
   }
 }
 
 export async function getChamaContributions(chamaId: string, cycleId?: string): Promise<Contribution[]> {
-  console.log('[Firestore] getChamaContributions:', chamaId);
+  if (isDemo(chamaId)) return MOCK_CONTRIBUTIONS;
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_CONTRIBUTIONS;
-    let q;
-    if (cycleId) {
-      q = query(
-        collection(db, 'contributions'),
-        where('chamaId', '==', chamaId),
-        where('cycleId', '==', cycleId),
-        orderBy('date', 'desc')
-      );
-    } else {
-      q = query(
-        collection(db, 'contributions'),
-        where('chamaId', '==', chamaId),
-        orderBy('date', 'desc')
-      );
-    }
-    const snap = await getDocs(q);
-    if (snap.empty) return MOCK_CONTRIBUTIONS;
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Contribution));
+    const q = cycleId
+      ? query(
+          collection(db, 'contributions'),
+          where('chamaId', '==', chamaId),
+          where('cycleId', '==', cycleId),
+          orderBy('date', 'desc')
+        )
+      : query(collection(db, 'contributions'), where('chamaId', '==', chamaId), orderBy('date', 'desc'));
+    return toList<Contribution>(await getDocs(q));
   } catch (err) {
-    console.warn('[Firestore] Error getting chama contribs, using mock:', err);
-    return MOCK_CONTRIBUTIONS;
+    console.error('[Firestore] getChamaContributions failed:', err);
+    return [];
   }
 }
 
 export async function getUserFines(userId: string, chamaId: string): Promise<Fine[]> {
-  console.log('[Firestore] getUserFines:', userId);
+  if (isDemo(chamaId)) return MOCK_FINES.filter((f) => f.userId === userId);
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_FINES.filter((f) => f.userId === userId);
     const q = query(
       collection(db, 'fines'),
       where('userId', '==', userId),
       where('chamaId', '==', chamaId),
       orderBy('appliedAt', 'desc')
     );
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Fine));
+    return toList<Fine>(await getDocs(q));
   } catch (err) {
-    return MOCK_FINES.filter((f) => f.userId === userId);
+    console.error('[Firestore] getUserFines failed:', err);
+    return [];
   }
 }
 
 export async function getChamaFines(chamaId: string): Promise<Fine[]> {
-  console.log('[Firestore] getChamaFines:', chamaId);
+  if (isDemo(chamaId)) return MOCK_FINES;
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_FINES;
-    const q = query(
-      collection(db, 'fines'),
-      where('chamaId', '==', chamaId),
-      orderBy('appliedAt', 'desc')
-    );
-    const snap = await getDocs(q);
-    if (snap.empty) return MOCK_FINES;
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Fine));
+    const q = query(collection(db, 'fines'), where('chamaId', '==', chamaId), orderBy('appliedAt', 'desc'));
+    return toList<Fine>(await getDocs(q));
   } catch (err) {
-    return MOCK_FINES;
+    console.error('[Firestore] getChamaFines failed:', err);
+    return [];
   }
 }
 
 export async function getChamaPayouts(chamaId: string): Promise<Payout[]> {
-  console.log('[Firestore] getChamaPayouts:', chamaId);
+  if (isDemo(chamaId)) return MOCK_PAYOUTS;
   try {
-    if (chamaId.startsWith('chama_demo')) return MOCK_PAYOUTS;
-    const q = query(
-      collection(db, 'payouts'),
-      where('chamaId', '==', chamaId),
-      orderBy('date', 'desc')
-    );
-    const snap = await getDocs(q);
-    if (snap.empty) return MOCK_PAYOUTS;
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as Payout));
+    const q = query(collection(db, 'payouts'), where('chamaId', '==', chamaId), orderBy('date', 'desc'));
+    return toList<Payout>(await getDocs(q));
   } catch (err) {
-    return MOCK_PAYOUTS;
+    console.error('[Firestore] getChamaPayouts failed:', err);
+    return [];
   }
 }
 

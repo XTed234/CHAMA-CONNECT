@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── helpers ──────────────────────────────────────────────
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // True when the caller is the chairperson recorded on that chama document.
+    function isChairOf(chamaId) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/chamas/$(chamaId)).data.chairpersonId == request.auth.uid;
+    }
+
+    // True when an update touches ONLY the listed fields.
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // ── collections ──────────────────────────────────────────
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /chamas/{chamaId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.chairpersonId == request.auth.uid;
+      allow update: if isChairOf(chamaId);
+    }
+
+    match /memberships/{id} {
+      allow read: if signedIn();
+
+      // You can ask to join (pending) as yourself. The chairperson can add their own active membership.
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && (request.resource.data.status == 'pending'
+            || isChairOf(request.resource.data.chamaId));
+
+      allow update: if isChairOf(resource.data.chamaId)
+        || (signedIn() && resource.data.userId == request.auth.uid
+            && (onlyChanges(['totalContributed'])
+                || onlyChanges(['outstandingFine'])
+                || (onlyChanges(['status', 'exitRequestedAt'])
+                    && request.resource.data.status == 'exit_requested')));
+
+      allow delete: if isChairOf(resource.data.chamaId);
+    }
+
+    match /contributions/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /cycles/{id} {
+      allow read: if signedIn();
+      allow create: if isChairOf(request.resource.data.chamaId);
+      allow update: if isChairOf(resource.data.chamaId)
+        || (signedIn() && onlyChanges(['totalContributions']));
+    }
+
+    match /fines/{id} {
+      allow read: if signedIn();
+      allow create: if isChairOf(request.resource.data.chamaId);
+      allow update: if isChairOf(resource.data.chamaId)
+        || (signedIn() && resource.data.userId == request.auth.uid && onlyChanges(['status']));
+    }
+
+    match /payouts/{id} {
+      allow read: if signedIn();
+      allow create: if isChairOf(request.resource.data.chamaId);
+    }
+  }
+}

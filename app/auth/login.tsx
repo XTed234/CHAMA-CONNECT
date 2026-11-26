@@ -64,27 +64,21 @@ export default function LoginScreen() {
     }
   };
 
+  // Developer shortcut. These two accounts must exist in Firebase Authentication
+  // (create them once through the Register screen). The buttons only show in dev builds.
   const handleQuickDemo = async (role: 'chairperson' | 'member') => {
-    if (role === 'chairperson') {
-      setEmail('faith.wanjiku@connectchama.ke');
-      setPassword('password123');
-      await signIn(
-        'faith.wanjiku@connectchama.ke',
-        'password123',
-        'Faith Wanjiku',
-        'chairperson'
-      );
-    } else {
-      setEmail('david.kiprono@example.com');
-      setPassword('password123');
-      await signIn(
-        'david.kiprono@example.com',
-        'password123',
-        'David Kiprono',
-        'member'
-      );
+    const account =
+      role === 'chairperson'
+        ? { email: 'faith.wanjiku@connectchama.ke', password: 'password123' }
+        : { email: 'david.kiprono@example.com', password: 'password123' };
+    setEmail(account.email);
+    setPassword(account.password);
+    try {
+      await signIn(account.email, account.password);
+      router.replace('/(tabs)/(home)');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed');
     }
-    router.replace('/(tabs)/(home)');
   };
 
   return (
@@ -135,7 +129,8 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Quick Demo Segment */}
+          {/* Quick Demo Segment (dev builds only) */}
+          {__DEV__ && (
           <View style={styles.demoCard}>
             <Text style={styles.demoHeader}>1-TAP TEST SIGN IN:</Text>
             <View style={styles.demoPillsRow}>
@@ -158,6 +153,7 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          )}
 
           {/* Email Input */}
           <View style={styles.inputGroup}>

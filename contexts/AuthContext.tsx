@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '@/config/firebase';
 import { User, UserRole } from '@/types';
 
 interface AuthContextType {
@@ -7,100 +15,102 @@ interface AuthContextType {
   loading: boolean;
   hasSeenIntro: boolean;
   setHasSeenIntro: (seen: boolean) => Promise<void>;
-  signIn: (email: string, password: string, nameOverride?: string, roleOverride?: UserRole) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string, role?: UserRole, phoneNumber?: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string,
+    role?: UserRole,
+    phoneNumber?: string
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<User>) => Promise<void>;
 }
 
-export const DEFAULT_USER: User = {
-  uid: 'demo_user_1',
-  fullName: 'Faith Wanjiku',
-  email: 'faith.wanjiku@connectchama.ke',
-  phoneNumber: '+254 712 345 678',
-  role: 'chairperson',
-  createdAt: '2025-01-01T00:00:00.000Z',
-};
-
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const STORAGE_KEY_USER = '@connectchama_user';
 const STORAGE_KEY_INTRO = '@connectchama_has_seen_intro';
+
+// Firebase error codes are not friendly, so translate the common ones.
+function friendlyAuthError(err: unknown): Error {
+  const code = (err as { code?: string })?.code ?? '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return new Error('Incorrect email or password.');
+    case 'auth/email-already-in-use':
+      return new Error('An account with this email already exists.');
+    case 'auth/weak-password':
+      return new Error('Password must be at least 6 characters.');
+    case 'auth/invalid-email':
+      return new Error('Enter a valid email address.');
+    case 'auth/network-request-failed':
+      return new Error('No connection. Check your internet and try again.');
+    default:
+      return err instanceof Error ? err : new Error('Something went wrong. Try again.');
+  }
+}
+
+// Reads the profile document that signUp() wrote to users/{uid}.
+async function loadProfile(uid: string): Promise<User | null> {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) return null;
+  return { ...(snap.data() as Omit<User, 'uid'>), uid };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [hasSeenIntro, setHasSeenIntroState] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [introReady, setIntroReady] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
-  // Restore user & intro state on app mount
+  // The app should only decide where to go once BOTH of these have finished.
+  const loading = !(introReady && authReady);
+
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const [storedUserJson, storedIntro] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEY_USER),
-          AsyncStorage.getItem(STORAGE_KEY_INTRO),
-        ]);
+    AsyncStorage.getItem(STORAGE_KEY_INTRO)
+      .then((value) => {
+        if (value === 'true') setHasSeenIntroState(true);
+      })
+      .catch((err) => console.error('[Auth] Could not read intro flag:', err))
+      .finally(() => setIntroReady(true));
+  }, []);
 
-        if (storedUserJson) {
-          const parsed = JSON.parse(storedUserJson) as User;
-          setUser(parsed);
-        }
-        if (storedIntro === 'true') {
-          setHasSeenIntroState(true);
-        }
-      } catch (err) {
-        console.error('[AuthContext] Error reading from AsyncStorage:', err);
-      } finally {
-        setLoading(false);
+  // Firebase tells us when someone is signed in or out, including after an app restart.
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setUser(null);
+        setAuthReady(true);
+        return;
       }
-    };
-
-    initAuth();
+      try {
+        const profile = await loadProfile(firebaseUser.uid);
+        // If the profile is not there yet, signUp() is still writing it and will set the user itself.
+        if (profile) setUser(profile);
+      } catch (err) {
+        console.error('[Auth] Could not load profile:', err);
+      } finally {
+        setAuthReady(true);
+      }
+    });
+    return unsubscribe;
   }, []);
 
   const setHasSeenIntro = async (seen: boolean) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY_INTRO, seen ? 'true' : 'false');
-      setHasSeenIntroState(seen);
-    } catch (err) {
-      console.error('[AuthContext] Error setting hasSeenIntro:', err);
-    }
+    setHasSeenIntroState(seen);
+    await AsyncStorage.setItem(STORAGE_KEY_INTRO, seen ? 'true' : 'false');
   };
 
-  const signIn = async (
-    email: string,
-    password: string,
-    nameOverride?: string,
-    roleOverride?: UserRole
-  ) => {
-    console.log('[AuthContext] signIn with:', email);
-    // Derive a clean full name from the email if not explicitly provided
-    let derivedName = nameOverride?.trim();
-    if (!derivedName) {
-      const emailPrefix = email.split('@')[0] || 'User';
-      derivedName = emailPrefix
-        .split(/[._-]/)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
-    }
-
-    const authenticatedUser: User = {
-      uid: 'usr_' + Math.random().toString(36).substr(2, 9),
-      fullName: derivedName || 'Chama Member',
-      email: email.trim().toLowerCase(),
-      phoneNumber: user?.phoneNumber || '+254 700 000 000',
-      role: roleOverride || (email.toLowerCase().includes('chair') ? 'chairperson' : 'member'),
-      createdAt: new Date().toISOString(),
-    };
-
+  const signIn = async (email: string, password: string) => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authenticatedUser));
-      await AsyncStorage.setItem(STORAGE_KEY_INTRO, 'true');
-      setHasSeenIntroState(true);
-      setUser(authenticatedUser);
-      console.log('[AuthContext] signIn success, user profile updated:', authenticatedUser);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const profile = await loadProfile(cred.user.uid);
+      if (!profile) throw new Error('Your profile was not found. Please register again.');
+      setUser(profile);
     } catch (err) {
-      console.error('[AuthContext] Error storing signed-in user:', err);
+      throw friendlyAuthError(err);
     }
   };
 
@@ -111,61 +121,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role: UserRole = 'member',
     phoneNumber?: string
   ) => {
-    console.log('[AuthContext] signUp with:', { fullName, email, role, phoneNumber });
-    const newUser: User = {
-      uid: 'usr_' + Date.now(),
-      fullName: fullName.trim(),
-      email: email.trim().toLowerCase(),
-      phoneNumber: phoneNumber?.trim() || undefined,
-      role: role,
-      createdAt: new Date().toISOString(),
-    };
-
     try {
-      await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(newUser));
-      await AsyncStorage.setItem(STORAGE_KEY_INTRO, 'true');
-      setHasSeenIntroState(true);
-      setUser(newUser);
-      console.log('[AuthContext] signUp success, new profile active:', newUser);
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const profile: Omit<User, 'uid'> = {
+        fullName: fullName.trim(),
+        email: email.trim(),
+        phoneNumber: phoneNumber ?? '', // Firestore rejects undefined values
+        role,
+        createdAt: new Date().toISOString(),
+      };
+      await setDoc(doc(db, 'users', cred.user.uid), profile);
+      setUser({ ...profile, uid: cred.user.uid });
     } catch (err) {
-      console.error('[AuthContext] Error saving registered user:', err);
+      throw friendlyAuthError(err);
     }
   };
 
   const signOut = async () => {
-    console.log('[AuthContext] signOut');
-    try {
-      await AsyncStorage.removeItem(STORAGE_KEY_USER);
-      setUser(null);
-    } catch (err) {
-      console.error('[AuthContext] Error clearing user during signOut:', err);
-    }
+    await firebaseSignOut(auth);
+    setUser(null);
   };
 
   const updateProfile = async (data: Partial<User>) => {
     if (!user) return;
-    const updated = { ...user, ...data };
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(updated));
-      setUser(updated);
-      console.log('[AuthContext] Profile updated:', updated);
-    } catch (err) {
-      console.error('[AuthContext] Error updating profile:', err);
-    }
+    const { uid: _ignored, ...changes } = data;
+    await updateDoc(doc(db, 'users', user.uid), changes);
+    setUser({ ...user, ...changes });
   };
 
   return (
     <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        hasSeenIntro,
-        setHasSeenIntro,
-        signIn,
-        signUp,
-        signOut,
-        updateProfile,
-      }}
+      value={{ user, loading, hasSeenIntro, setHasSeenIntro, signIn, signUp, signOut, updateProfile }}
     >
       {children}
     </AuthContext.Provider>

@@ -261,13 +261,21 @@ export default function HomeScreen() {
           <View style={{ padding: 20 }}>
             <EmptyState
               icon={Users}
-              title="No chama yet"
-              subtitle="Join a chama to start contributing and participating in the merry-go-round."
-              ctaLabel="Join a chama"
-              onCta={() => {
-                console.log('[Home] Navigate to join chama');
-                router.push('/chama/join');
-              }}
+              title={membership?.status === 'pending' ? 'Request sent' : 'No chama yet'}
+              subtitle={
+                membership?.status === 'pending'
+                  ? 'Waiting for the chairperson to approve you. This page updates by itself.'
+                  : 'Join a chama to start contributing and participating in the merry-go-round.'
+              }
+              ctaLabel={membership?.status === 'pending' ? undefined : 'Join a chama'}
+              onCta={
+                membership?.status === 'pending'
+                  ? undefined
+                  : () => {
+                      console.log('[Home] Navigate to join chama');
+                      router.push('/chama/join');
+                    }
+              }
             />
           </View>
         ) : (

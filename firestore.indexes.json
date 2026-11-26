@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    { "collectionGroup": "cycles", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "cycleNumber", "order": "DESCENDING" } ] },
+    { "collectionGroup": "contributions", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "date", "order": "DESCENDING" } ] },
+    { "collectionGroup": "contributions", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "cycleId", "order": "ASCENDING" }, { "fieldPath": "date", "order": "DESCENDING" } ] },
+    { "collectionGroup": "contributions", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "date", "order": "DESCENDING" } ] },
+    { "collectionGroup": "fines", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "appliedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "fines", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "appliedAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "payouts", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "chamaId", "order": "ASCENDING" }, { "fieldPath": "date", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": []
+}

@@ -11,6 +11,7 @@ import {
 import { db } from '@/config/firebase';
 import { Chama, Membership } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { DEMO_MODE } from '@/config/appConfig';
 
 interface ChamaContextType {
   userChama: Chama | null;
@@ -52,8 +53,8 @@ export const DEMO_MEMBERSHIP: Membership = {
 export function ChamaProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   // Initialized with demo data so UI is immediately visible
-  const [userChama, setUserChama] = useState<Chama | null>(DEMO_CHAMA);
-  const [membership, setMembership] = useState<Membership | null>(DEMO_MEMBERSHIP);
+  const [userChama, setUserChama] = useState<Chama | null>(DEMO_MODE ? DEMO_CHAMA : null);
+  const [membership, setMembership] = useState<Membership | null>(DEMO_MODE ? DEMO_MEMBERSHIP : null);
   const [chamaLoading, setChamaLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -63,19 +64,53 @@ export function ChamaProvider({ children }: { children: React.ReactNode }) {
       setMembership(null);
       return;
     }
-    // Reflect user's profile information in the chama membership
-    const activeChama: Chama = {
-      ...DEMO_CHAMA,
-      chairpersonId: user.role === 'chairperson' ? user.uid : DEMO_CHAMA.chairpersonId,
-    };
-    const activeMembership: Membership = {
-      ...DEMO_MEMBERSHIP,
-      userId: user.uid,
-      userName: user.fullName,
-      userEmail: user.email,
-    };
-    setUserChama(activeChama);
-    setMembership(activeMembership);
+
+    // Demo mode keeps the old behaviour: everyone lands in the sample chama.
+    if (DEMO_MODE) {
+      setUserChama({
+        ...DEMO_CHAMA,
+        chairpersonId: user.role === 'chairperson' ? user.uid : DEMO_CHAMA.chairpersonId,
+      });
+      setMembership({
+        ...DEMO_MEMBERSHIP,
+        userId: user.uid,
+        userName: user.fullName,
+        userEmail: user.email,
+      });
+      return;
+    }
+
+    setChamaLoading(true);
+    try {
+      // 1. Find this user's membership(s).
+      const snap = await getDocs(query(collection(db, 'memberships'), where('userId', '==', user.uid)));
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Membership);
+
+      // 2. Prefer a live membership; otherwise fall back to a pending request.
+      const live = all.find((m) => m.status === 'active' || m.status === 'exit_requested');
+      const pending = all.find((m) => m.status === 'pending');
+      const current = live ?? pending ?? null;
+
+      if (!current) {
+        setUserChama(null);
+        setMembership(null);
+        return;
+      }
+
+      setMembership(current);
+
+      // 3. Only approved members get the chama dashboard. Pending members see a waiting message.
+      if (current.status === 'pending') {
+        setUserChama(null);
+        return;
+      }
+      const chamaSnap = await getDoc(doc(db, 'chamas', current.chamaId));
+      setUserChama(chamaSnap.exists() ? ({ id: chamaSnap.id, ...chamaSnap.data() } as Chama) : null);
+    } catch (err) {
+      console.error('[ChamaContext] loadChama failed:', err);
+    } finally {
+      setChamaLoading(false);
+    }
   }, [user]);
 
   const refreshChama = useCallback(() => {
@@ -89,26 +124,36 @@ export function ChamaProvider({ children }: { children: React.ReactNode }) {
 
   // Real-time listener for chama updates
   useEffect(() => {
-    if (!userChama?.id) return;
-    console.log('[ChamaContext] Setting up real-time listener for chama:', userChama.id);
-    const unsub = onSnapshot(doc(db, 'chamas', userChama.id), (snap) => {
-      if (snap.exists()) {
-        setUserChama({ id: snap.id, ...snap.data() } as Chama);
-      }
-    });
+    if (DEMO_MODE || !userChama?.id) return;
+    const unsub = onSnapshot(
+      doc(db, 'chamas', userChama.id),
+      (snap) => {
+        if (snap.exists()) setUserChama({ id: snap.id, ...snap.data() } as Chama);
+      },
+      (err) => console.error('[ChamaContext] chama listener error:', err)
+    );
     return unsub;
   }, [userChama?.id]);
 
-  // Real-time listener for membership updates
+  // Real-time listener for membership updates. This is also how a pending member
+  // finds out they were approved (status changes) or rejected (document deleted).
   useEffect(() => {
-    if (!membership?.id) return;
-    const unsub = onSnapshot(doc(db, 'memberships', membership.id), (snap) => {
-      if (snap.exists()) {
-        setMembership({ id: snap.id, ...snap.data() } as Membership);
-      }
-    });
+    if (DEMO_MODE || !membership?.id) return;
+    const unsub = onSnapshot(
+      doc(db, 'memberships', membership.id),
+      (snap) => {
+        if (!snap.exists()) {
+          refreshChama();
+          return;
+        }
+        const next = { id: snap.id, ...snap.data() } as Membership;
+        setMembership(next);
+        if (next.status === 'active' && !userChama) refreshChama();
+      },
+      (err) => console.error('[ChamaContext] membership listener error:', err)
+    );
     return unsub;
-  }, [membership?.id]);
+  }, [membership?.id, userChama, refreshChama]);
 
   return (
     <ChamaContext.Provider value={{ userChama, membership, chamaLoading, loadChama, refreshChama }}>
